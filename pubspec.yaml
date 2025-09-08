@@ -1,0 +1,43 @@
+name: schoolapp
+description: "A new Flutter project."
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  
+  camera: ^0.11.2
+  image_picker: ^1.1.2
+  opencv_dart: ^1.4.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  build_runner: ^2.4.13
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+hooks:
+  user_defines:
+    dartcv4:
+      exclude_modules:
+        - contrib
+        - videoio
+        - highgui
+        - dnn
+        - features2d
+      include_modules:
+        - core
+        - imgproc
+        - imgcodecs
