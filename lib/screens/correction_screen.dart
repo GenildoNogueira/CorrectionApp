@@ -110,8 +110,7 @@ class _CorrectionScreenState extends State<CorrectionScreen>
     if (image != null) {
       setState(() {
         _capturedImage = File(image.path);
-        _answersExtractedFromImage =
-            false; // Reset flag when new image is selected
+        _answersExtractedFromImage = false;
       });
       _showSnackBar(
         'Imagem selecionada! Use "Extrair Respostas" para processar automaticamente.',
@@ -444,14 +443,14 @@ class _CorrectionScreenState extends State<CorrectionScreen>
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
       decoration: const BoxDecoration(
-        color: Color(0xFF764ba2),
+        color: Colors.blue,
       ),
       child: SafeArea(
         child: Row(
+          spacing: 12,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const Icon(Icons.grading_rounded, color: Colors.white, size: 30),
-            const SizedBox(width: 12),
             const Text(
               'Corretor de Provas IA',
               style: TextStyle(
@@ -461,7 +460,6 @@ class _CorrectionScreenState extends State<CorrectionScreen>
               ),
             ),
             if (_answersExtractedFromImage) ...[
-              const SizedBox(width: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(

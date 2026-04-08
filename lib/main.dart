@@ -16,6 +16,7 @@ class CorrectionApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSwatch(
           primarySwatch: Colors.blue,
+          backgroundColor: Colors.blue,
         ),
         fontFamily: 'Segoe UI',
         visualDensity: VisualDensity.adaptivePlatformDensity,

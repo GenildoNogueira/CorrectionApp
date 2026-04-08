@@ -1,4 +1,4 @@
-package com.example.myapp
+package com.gnsdev.corretor_gabarito
 
 import io.flutter.embedding.android.FlutterActivity
 

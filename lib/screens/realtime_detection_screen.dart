@@ -228,74 +228,99 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
 
   Future<DetectionResult> _detectBubblesRealtime(cv.Mat image) async {
     try {
-      final originalSize = (image.width, image.height);
-      final processingSize = (480, 640);
+      final originalWidth = image.width;
+      final originalHeight = image.height;
 
-      final resized = cv.resize(
-        image,
-        processingSize,
-        interpolation: cv.INTER_AREA,
-      );
+      // 1. Redimensiona para tamanho fixo de processamento
+      const procWidth = 640;
+      const procHeight = 480;
+      final resized = cv.resize(image, (procWidth, procHeight));
+
+      // 2. Converte para cinza e suaviza
       final gray = cv.cvtColor(resized, cv.COLOR_BGR2GRAY);
-      final blurred = cv.gaussianBlur(gray, (5, 5), 0);
+      final blurred = cv.gaussianBlur(gray, (9, 9), 2);
+
+      // 3. Threshold adaptativo com parâmetros mais robustos
       final thresh = cv.adaptiveThreshold(
         blurred,
         255,
         cv.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv.THRESH_BINARY_INV,
-        11,
-        2,
+        15,
+        4,
       );
-      final kernel = cv.getStructuringElement(cv.MORPH_RECT, (3, 3));
-      final cleaned = cv.morphologyEx(thresh, cv.MORPH_OPEN, kernel);
+
+      // 4. Fechamento morfológico (preenche buracos nas bolhas marcadas)
+      //    seguido de abertura (remove ruído pequeno)
+      final kernelClose = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5));
+      final kernelOpen = cv.getStructuringElement(cv.MORPH_RECT, (3, 3));
+      final closed = cv.morphologyEx(thresh, cv.MORPH_CLOSE, kernelClose);
+      final cleaned = cv.morphologyEx(closed, cv.MORPH_OPEN, kernelOpen);
 
       final contours = cv
           .findContours(cleaned, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
           .$1;
 
       final bubbles = <DetectedBubble>[];
-      final scaleX = originalSize.$1 / processingSize.$1;
-      final scaleY = originalSize.$2 / processingSize.$2;
+      final scaleX = originalWidth / procWidth;
+      final scaleY = originalHeight / procHeight;
 
       for (final contour in contours) {
-        final rect = cv.boundingRect(contour);
-        final aspectRatio = rect.width / rect.height.toDouble();
         final area = cv.contourArea(contour);
 
-        if (area > 150 && aspectRatio >= 0.7 && aspectRatio <= 1.3) {
-          final scaledRect = Rect.fromLTWH(
-            rect.x * scaleX,
-            rect.y * scaleY,
-            rect.width * scaleX,
-            rect.height * scaleY,
-          );
+        // FIX 1 – faixa de área realista para bolhas de gabarito
+        if (area < 200 || area > 6000) continue;
 
-          final mask = cv.Mat.zeros(
-            cleaned.rows,
-            cleaned.cols,
-            cv.MatType.CV_8UC1,
-          );
-          cv.drawContours(
-            mask,
-            cv.VecVecPoint.fromVecPoint(contour),
-            -1,
-            cv.Scalar.all(255),
-            thickness: -1,
-          );
+        final rect = cv.boundingRect(contour);
+        final aspectRatio = rect.width / rect.height.toDouble();
+        if (aspectRatio < 0.55 || aspectRatio > 1.45) continue;
 
-          final masked = cv.bitwiseAND(cleaned, cleaned, mask: mask);
-          final filledPixels = cv.countNonZero(masked);
-          final totalPixels = area;
-          final fillRatio = totalPixels > 0 ? filledPixels / totalPixels : 0.0;
+        // FIX 2 – filtro de circularidade: 4π·A / P²  (círculo perfeito = 1.0)
+        final perimeter = cv.arcLength(contour, true);
+        if (perimeter <= 0) continue;
+        final circularity = (4 * 3.14159265 * area) / (perimeter * perimeter);
+        if (circularity < 0.55)
+          continue; // descarta retângulos e formas irregulares
 
-          bubbles.add(
-            DetectedBubble(
-              rect: scaledRect,
-              fillRatio: fillRatio,
-              isMarked: fillRatio > 0.45, // Threshold ajustado
-            ),
-          );
-        }
+        // Coordenadas no espaço original
+        final scaledRect = Rect.fromLTWH(
+          rect.x * scaleX,
+          rect.y * scaleY,
+          rect.width * scaleX,
+          rect.height * scaleY,
+        );
+
+        // FIX 3 – fill ratio correto:
+        //   • mask: pixels DENTRO do contorno (forma real da bolha)
+        //   • filledPx: pixels brancos do threshold dentro dessa máscara
+        //   • totalPx: total de pixels da máscara  → divisão consistente
+        final mask = cv.Mat.zeros(
+          cleaned.rows,
+          cleaned.cols,
+          cv.MatType.CV_8UC1,
+        );
+        cv.drawContours(
+          mask,
+          cv.VecVecPoint.fromVecPoint(contour),
+          -1,
+          cv.Scalar.all(255),
+          thickness: -1, // preenche o interior
+        );
+        final totalPx = cv.countNonZero(mask);
+        final maskedImg = cv.bitwiseAND(cleaned, cleaned, mask: mask);
+        final filledPx = cv.countNonZero(maskedImg);
+
+        final fillRatio = totalPx > 0 ? filledPx / totalPx : 0.0;
+
+        bubbles.add(
+          DetectedBubble(
+            rect: scaledRect,
+            fillRatio: fillRatio,
+            isMarked:
+                fillRatio >
+                0.50, // threshold ligeiramente mais alto = menos falsos positivos
+          ),
+        );
       }
 
       final answers = _organizeBubblesIntoAnswers(bubbles);
@@ -309,61 +334,87 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
   List<String?> _organizeBubblesIntoAnswers(List<DetectedBubble> bubbles) {
     if (bubbles.isEmpty) return [];
 
-    final answers = <String?>[];
+    // FIX 4 – tolerância dinâmica baseada no tamanho médio real das bolhas
+    final avgH =
+        bubbles.map((b) => b.rect.height).reduce((a, b) => a + b) /
+        bubbles.length;
     final rowTolerance =
-        30.0; // Tolerância em pixels para agrupar na mesma linha
+        avgH * 0.6; // 60 % da altura média → agrupa mesma linha
 
-    // Ordena bolhas primariamente por Y, depois por X
+    // Agrupa por linhas usando o CENTRO vertical (não o topo)
     bubbles.sort((a, b) {
-      if ((a.rect.top - b.rect.top).abs() < rowTolerance) {
-        return a.rect.left.compareTo(b.rect.left);
-      }
-      return a.rect.top.compareTo(b.rect.top);
+      final dy = a.rect.center.dy - b.rect.center.dy;
+      if (dy.abs() < rowTolerance)
+        return a.rect.center.dx.compareTo(b.rect.center.dx);
+      return dy.compareTo(0);
     });
 
-    final questionRows = <List<DetectedBubble>>[];
-    if (bubbles.isNotEmpty) {
-      var currentRow = <DetectedBubble>[bubbles.first];
-      for (int i = 1; i < bubbles.length; i++) {
-        if ((bubbles[i].rect.top - currentRow.first.rect.top).abs() <
-            rowTolerance) {
-          currentRow.add(bubbles[i]);
-        } else {
-          questionRows.add(List.from(currentRow));
-          currentRow = [bubbles[i]];
-        }
-      }
-      questionRows.add(currentRow);
-    }
+    final rows = <List<DetectedBubble>>[];
+    var current = [bubbles.first];
 
-    // Ordena as linhas por posição Y
-    questionRows.sort((a, b) => a.first.rect.top.compareTo(b.first.rect.top));
+    for (int i = 1; i < bubbles.length; i++) {
+      final rowCenterY =
+          current.map((b) => b.rect.center.dy).reduce((a, b) => a + b) /
+          current.length;
 
-    for (var row in questionRows) {
-      if (row.length == widget.exam.availableOptions.length) {
-        row.sort((a, b) => a.rect.left.compareTo(b.rect.left));
-
-        int markedIndex = -1;
-        double maxFillRatio = 0.0;
-
-        // Encontra a bolha mais preenchida na linha
-        for (int i = 0; i < row.length; i++) {
-          if (row[i].isMarked && row[i].fillRatio > maxFillRatio) {
-            maxFillRatio = row[i].fillRatio;
-            markedIndex = i;
-          }
-        }
-
-        // Verifica se mais de uma bolha foi marcada (anula a questão)
-        final markedCount = row.where((b) => b.isMarked).length;
-
-        if (markedCount == 1 && markedIndex != -1) {
-          answers.add(widget.exam.availableOptions[markedIndex]);
-        } else {
-          answers.add(null); // Questão em branco ou anulada
-        }
+      if ((bubbles[i].rect.center.dy - rowCenterY).abs() < rowTolerance) {
+        current.add(bubbles[i]);
+      } else {
+        rows.add(List.from(current));
+        current = [bubbles[i]];
       }
     }
+    rows.add(current);
+
+    // Ordena linhas de cima para baixo pelo centro médio
+    rows.sort((a, b) {
+      final aY =
+          a.map((b) => b.rect.center.dy).reduce((x, y) => x + y) / a.length;
+      final bY =
+          b.map((b) => b.rect.center.dy).reduce((x, y) => x + y) / b.length;
+      return aY.compareTo(bY);
+    });
+
+    final numOptions = widget.exam.availableOptions.length;
+    final answers = <String?>[];
+
+    for (final row in rows) {
+      if (row.length != numOptions) continue; // ignora linhas incompletas
+
+      row.sort((a, b) => a.rect.center.dx.compareTo(b.rect.center.dx));
+
+      // Encontra a bolha com maior fillRatio acima do limiar mínimo
+      int bestIdx = -1;
+      double bestFill = 0.45; // limiar mínimo para considerar marcada
+
+      for (int i = 0; i < row.length; i++) {
+        if (row[i].fillRatio > bestFill) {
+          bestFill = row[i].fillRatio;
+          bestIdx = i;
+        }
+      }
+
+      if (bestIdx == -1) {
+        answers.add(null); // nenhuma marcada → em branco
+        continue;
+      }
+
+      // FIX 5 – anti-ambiguidade: a bolha vencedora precisa ser
+      // pelo menos 15 pp mais preenchida que a segunda
+      final secondBest = row
+          .asMap()
+          .entries
+          .where((e) => e.key != bestIdx)
+          .map((e) => e.value.fillRatio)
+          .fold(0.0, (max, v) => v > max ? v : max);
+
+      if (row[bestIdx].fillRatio - secondBest >= 0.15) {
+        answers.add(widget.exam.availableOptions[bestIdx]);
+      } else {
+        answers.add(null); // duas bolhas muito parecidas → anula
+      }
+    }
+
     return answers;
   }
 
