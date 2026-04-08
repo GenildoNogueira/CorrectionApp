@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/exam.dart';
 import '../widgets/custom_dropdawn.dart';
@@ -53,9 +54,9 @@ class _ConfigurationScreenState extends State<ConfigurationScreen> {
     super.dispose();
   }
 
-  void _onNumQuestionsChanged(int newValue) {
+  void _onNumQuestionsChanged(String newValue) {
     setState(() {
-      _numQuestions = newValue;
+      _numQuestions = int.parse(newValue);
       _adjustAnswerKeySize();
     });
   }
@@ -212,29 +213,40 @@ class _ConfigurationScreenState extends State<ConfigurationScreen> {
               hint: 'Ex: Matemática - 1º Bimestre',
               icon: Icons.assignment,
             ),
-            CustomDropdawn(
-              label: 'Número de Questões',
-              initialValue: _numQuestions,
-              value: '$_numQuestions questões',
-              itemBuilder: (BuildContext context) =>
-                  [10, 15, 20, 25, 30, 40, 50].map((int value) {
-                    return PopupMenuItem<int>(
-                      value: value,
-                      height: 40,
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: Text(
-                          '$value questões',
-                          style: TextStyle(
-                            color: Color(0xFF09090B),
-                            fontSize: 14,
-                            fontWeight: FontWeight.w400,
-                          ),
-                        ),
-                      ),
-                    );
-                  }).toList(),
-              onSelected: _onNumQuestionsChanged,
+            TextFormField(
+              initialValue: _numQuestions.toString(),
+              keyboardType: TextInputType.number,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+              ],
+              decoration: InputDecoration(
+                labelText: 'Quantidade de Questões',
+                hintText: 'Ex: 26',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                prefixIcon: const Icon(Icons.format_list_numbered),
+              ),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'Informe um número';
+                }
+
+                final int? number = int.tryParse(value);
+
+                if (number == null) {
+                  return 'Número inválido';
+                }
+                if (number < 1) {
+                  return 'Mínimo de 1 questão';
+                }
+                if (number > 100) {
+                  return 'Máximo de 100 questões';
+                }
+
+                return null;
+              },
+              onChanged: _onNumQuestionsChanged,
             ),
             CustomDropdawn(
               label: 'Número de Alternativas',

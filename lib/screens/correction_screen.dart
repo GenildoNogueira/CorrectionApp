@@ -5,6 +5,7 @@ import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../models/exam.dart';
+import '../models/static_detected_bubble.dart';
 import '../widgets/configuration_status_widget.dart';
 import '../widgets/camera_section_widget.dart';
 import '../widgets/answer_sheet_widget.dart';
@@ -30,6 +31,9 @@ class _CorrectionScreenState extends State<CorrectionScreen>
   CameraController? _cameraController;
   List<CameraDescription>? _cameras;
   File? _capturedImage;
+
+  List<StaticDetectedBubble> _detectedBubbles = [];
+  Size _imageOriginalSize = Size.zero;
 
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
@@ -89,8 +93,9 @@ class _CorrectionScreenState extends State<CorrectionScreen>
         final XFile image = await _cameraController!.takePicture();
         setState(() {
           _capturedImage = File(image.path);
-          _answersExtractedFromImage =
-              false; // Reset flag when new image is captured
+          _answersExtractedFromImage = false;
+          _detectedBubbles = []; // Limpa desenhos anteriores
+          _imageOriginalSize = Size.zero;
         });
         _cameraController!.dispose();
         _cameraController = null;
@@ -111,6 +116,8 @@ class _CorrectionScreenState extends State<CorrectionScreen>
       setState(() {
         _capturedImage = File(image.path);
         _answersExtractedFromImage = false;
+        _detectedBubbles = []; // Limpa desenhos anteriores
+        _imageOriginalSize = Size.zero;
       });
       _showSnackBar(
         'Imagem selecionada! Use "Extrair Respostas" para processar automaticamente.',
@@ -133,40 +140,42 @@ class _CorrectionScreenState extends State<CorrectionScreen>
         _examResult = null;
         _capturedImage = null;
         _answersExtractedFromImage = false;
+        _detectedBubbles = [];
+        _imageOriginalSize = Size.zero;
       });
       _showSnackBar('Prova configurada com sucesso!');
     }
   }
 
   void _selectAnswer(int questionIndex, String answer) {
-    // Valida se a resposta é válida para o exame atual
     if (_currentExam != null && _currentExam!.isValidAnswer(answer)) {
       setState(() {
         _studentAnswers[questionIndex] = answer;
       });
-      // Debug Snackbar: Mostrar qual resposta foi selecionada manualmente
       _showSnackBar('Questão $questionIndex marcada manualmente como $answer');
     }
   }
 
-  void _onAnswersExtracted(List<String?> extractedAnswers) {
+  void _onAnswersExtracted(ProcessedSheetResult result) {
     if (_currentExam == null) return;
 
     setState(() {
+      _detectedBubbles = result.bubbles;
+      _imageOriginalSize = Size(result.imageWidth, result.imageHeight);
+
       for (
         int i = 0;
-        i < extractedAnswers.length && i < _studentAnswers.length;
+        i < result.answers.length && i < _studentAnswers.length;
         i++
       ) {
-        if (extractedAnswers[i] != null) {
-          _studentAnswers[i] = extractedAnswers[i];
+        if (result.answers[i] != null) {
+          _studentAnswers[i] = result.answers[i];
         }
       }
       _answersExtractedFromImage = true;
     });
 
-    // Mostra estatísticas da extração
-    final extractedCount = extractedAnswers
+    final extractedCount = result.answers
         .where((answer) => answer != null)
         .length;
     final blankCount = _currentExam!.numQuestions - extractedCount;
@@ -175,7 +184,7 @@ class _CorrectionScreenState extends State<CorrectionScreen>
       'Extraídas $extractedCount respostas. $blankCount questões em branco. Verifique e corrija se necessário.',
     );
 
-    final debugAnswers = extractedAnswers
+    final debugAnswers = result.answers
         .take(5)
         .map((a) => a ?? 'branco')
         .join(', ');
@@ -239,7 +248,6 @@ class _CorrectionScreenState extends State<CorrectionScreen>
     _animationController.reset();
     _animationController.forward();
 
-    // Mostra informação adicional se as respostas foram extraídas da imagem
     if (_answersExtractedFromImage) {
       Future.delayed(const Duration(milliseconds: 500), () {
         _showSnackBar(
@@ -258,6 +266,8 @@ class _CorrectionScreenState extends State<CorrectionScreen>
       _examResult = null;
       _capturedImage = null;
       _answersExtractedFromImage = false;
+      _detectedBubbles = [];
+      _imageOriginalSize = Size.zero;
     });
     _cameraController?.dispose();
     _cameraController = null;
@@ -318,7 +328,6 @@ class _CorrectionScreenState extends State<CorrectionScreen>
                 builder: (context, constraints) {
                   const double mobileBreakpoint = 700;
                   if (constraints.maxWidth < mobileBreakpoint) {
-                    // Use Column for mobile layout
                     return Column(
                       spacing: 20,
                       children: [
@@ -326,6 +335,8 @@ class _CorrectionScreenState extends State<CorrectionScreen>
                           capturedImage: _capturedImage,
                           cameraController: _cameraController,
                           currentExam: _currentExam,
+                          detectedBubbles: _detectedBubbles,
+                          imageOriginalSize: _imageOriginalSize,
                           onStartCamera: _startCamera,
                           onCaptureImage: _captureImage,
                           onPickFromGallery: _pickImageFromGallery,
@@ -347,7 +358,6 @@ class _CorrectionScreenState extends State<CorrectionScreen>
                       ],
                     );
                   } else {
-                    // Use Row for wider layouts (tablet/desktop)
                     return Row(
                       spacing: 20,
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -357,6 +367,8 @@ class _CorrectionScreenState extends State<CorrectionScreen>
                             capturedImage: _capturedImage,
                             cameraController: _cameraController,
                             currentExam: _currentExam,
+                            detectedBubbles: _detectedBubbles,
+                            imageOriginalSize: _imageOriginalSize,
                             onStartCamera: _startCamera,
                             onCaptureImage: _captureImage,
                             onPickFromGallery: _pickImageFromGallery,
@@ -384,7 +396,6 @@ class _CorrectionScreenState extends State<CorrectionScreen>
                 },
               ),
 
-              // Automatic extraction status
               if (_answersExtractedFromImage)
                 Container(
                   padding: const EdgeInsets.all(16),

@@ -29,7 +29,9 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
     with WidgetsBindingObserver {
   late CameraController _cameraController;
   bool _isProcessing = false;
-  bool _isDetectionActive = true;
+
+  bool _isDetectionActive = false;
+
   List<String?>? _detectedAnswers;
   List<DetectedBubble> _detectedBubbles = [];
 
@@ -61,9 +63,7 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!_cameraController.value.isInitialized) {
-      return;
-    }
+    if (!_cameraController.value.isInitialized) return;
 
     if (state == AppLifecycleState.inactive) {
       _stopDetection();
@@ -78,7 +78,6 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
       widget.camera,
       ResolutionPreset.high,
       enableAudio: false,
-      // Define o formato de imagem de forma inteligente baseado na plataforma
       imageFormatGroup: Platform.isAndroid
           ? ImageFormatGroup.yuv420
           : ImageFormatGroup.bgra8888,
@@ -96,13 +95,11 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
   }
 
   void _toggleDetection() {
-    setState(() {
-      if (_isDetectionActive) {
-        _stopDetection();
-      } else {
-        _startDetection();
-      }
-    });
+    if (_isDetectionActive) {
+      _stopDetection();
+    } else {
+      _startDetection();
+    }
   }
 
   void _startDetection() {
@@ -136,13 +133,12 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
         return;
       }
 
-      // Converte a imagem da câmera para bytes no formato RGBA
       final bytes = switch (format) {
         InputImageFormat.yuv_420_888 => yuv420ToRGBA8888(image),
         InputImageFormat.bgra8888 => bgraToRgbaInPlace(
           image.planes.first.bytes,
         ),
-        _ => null, // Suporta yuv e bgra por enquanto
+        _ => null,
       };
 
       if (bytes == null) {
@@ -150,18 +146,15 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
         return;
       }
 
-      // Cria a matriz do OpenCV a partir dos bytes
       cv.Mat mat = cv.Mat.fromList(
         image.height,
         image.width,
-        cv.MatType.CV_8UC4, // 4 canais (RGBA)
+        cv.MatType.CV_8UC4,
         bytes,
       );
 
-      // Converte de RGBA para BGR, o formato que o OpenCV usa internamente
       mat = cv.cvtColor(mat, cv.COLOR_RGBA2BGR);
 
-      // ** LÓGICA CRÍTICA DE ROTAÇÃO DA IMAGEM **
       final sensorOrientation = widget.camera.sensorOrientation;
       var rotationCompensation =
           _orientations[_cameraController.value.deviceOrientation];
@@ -174,7 +167,6 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
               (sensorOrientation - rotationCompensation + 360) % 360;
         }
 
-        // Aplica a rotação necessária na matriz
         switch (rotationCompensation) {
           case 90:
             mat = cv.rotate(mat, cv.ROTATE_90_CLOCKWISE);
@@ -188,7 +180,6 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
         }
       }
 
-      // Chama a sua função de detecção original com a imagem já corrigida
       final result = await _detectBubblesRealtime(mat);
 
       if (mounted) {
@@ -223,24 +214,18 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
     }
   }
 
-  // O resto do seu código (lógica de detecção e UI) permanece praticamente o mesmo,
-  // pois a lógica principal de detecção já era muito boa.
-
   Future<DetectionResult> _detectBubblesRealtime(cv.Mat image) async {
     try {
       final originalWidth = image.width;
       final originalHeight = image.height;
 
-      // 1. Redimensiona para tamanho fixo de processamento
       const procWidth = 640;
       const procHeight = 480;
       final resized = cv.resize(image, (procWidth, procHeight));
 
-      // 2. Converte para cinza e suaviza
       final gray = cv.cvtColor(resized, cv.COLOR_BGR2GRAY);
       final blurred = cv.gaussianBlur(gray, (9, 9), 2);
 
-      // 3. Threshold adaptativo com parâmetros mais robustos
       final thresh = cv.adaptiveThreshold(
         blurred,
         255,
@@ -250,8 +235,6 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
         4,
       );
 
-      // 4. Fechamento morfológico (preenche buracos nas bolhas marcadas)
-      //    seguido de abertura (remove ruído pequeno)
       final kernelClose = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5, 5));
       final kernelOpen = cv.getStructuringElement(cv.MORPH_RECT, (3, 3));
       final closed = cv.morphologyEx(thresh, cv.MORPH_CLOSE, kernelClose);
@@ -267,22 +250,17 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
 
       for (final contour in contours) {
         final area = cv.contourArea(contour);
-
-        // FIX 1 – faixa de área realista para bolhas de gabarito
         if (area < 200 || area > 6000) continue;
 
         final rect = cv.boundingRect(contour);
         final aspectRatio = rect.width / rect.height.toDouble();
         if (aspectRatio < 0.55 || aspectRatio > 1.45) continue;
 
-        // FIX 2 – filtro de circularidade: 4π·A / P²  (círculo perfeito = 1.0)
         final perimeter = cv.arcLength(contour, true);
         if (perimeter <= 0) continue;
         final circularity = (4 * 3.14159265 * area) / (perimeter * perimeter);
-        if (circularity < 0.55)
-          continue; // descarta retângulos e formas irregulares
+        if (circularity < 0.55) continue;
 
-        // Coordenadas no espaço original
         final scaledRect = Rect.fromLTWH(
           rect.x * scaleX,
           rect.y * scaleY,
@@ -290,10 +268,6 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
           rect.height * scaleY,
         );
 
-        // FIX 3 – fill ratio correto:
-        //   • mask: pixels DENTRO do contorno (forma real da bolha)
-        //   • filledPx: pixels brancos do threshold dentro dessa máscara
-        //   • totalPx: total de pixels da máscara  → divisão consistente
         final mask = cv.Mat.zeros(
           cleaned.rows,
           cleaned.cols,
@@ -304,7 +278,7 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
           cv.VecVecPoint.fromVecPoint(contour),
           -1,
           cv.Scalar.all(255),
-          thickness: -1, // preenche o interior
+          thickness: -1,
         );
         final totalPx = cv.countNonZero(mask);
         final maskedImg = cv.bitwiseAND(cleaned, cleaned, mask: mask);
@@ -316,9 +290,7 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
           DetectedBubble(
             rect: scaledRect,
             fillRatio: fillRatio,
-            isMarked:
-                fillRatio >
-                0.50, // threshold ligeiramente mais alto = menos falsos positivos
+            isMarked: fillRatio > 0.50,
           ),
         );
       }
@@ -334,18 +306,16 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
   List<String?> _organizeBubblesIntoAnswers(List<DetectedBubble> bubbles) {
     if (bubbles.isEmpty) return [];
 
-    // FIX 4 – tolerância dinâmica baseada no tamanho médio real das bolhas
     final avgH =
         bubbles.map((b) => b.rect.height).reduce((a, b) => a + b) /
         bubbles.length;
-    final rowTolerance =
-        avgH * 0.6; // 60 % da altura média → agrupa mesma linha
+    final rowTolerance = avgH * 0.6;
 
-    // Agrupa por linhas usando o CENTRO vertical (não o topo)
     bubbles.sort((a, b) {
       final dy = a.rect.center.dy - b.rect.center.dy;
-      if (dy.abs() < rowTolerance)
+      if (dy.abs() < rowTolerance) {
         return a.rect.center.dx.compareTo(b.rect.center.dx);
+      }
       return dy.compareTo(0);
     });
 
@@ -366,7 +336,6 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
     }
     rows.add(current);
 
-    // Ordena linhas de cima para baixo pelo centro médio
     rows.sort((a, b) {
       final aY =
           a.map((b) => b.rect.center.dy).reduce((x, y) => x + y) / a.length;
@@ -379,13 +348,12 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
     final answers = <String?>[];
 
     for (final row in rows) {
-      if (row.length != numOptions) continue; // ignora linhas incompletas
+      if (row.length != numOptions) continue;
 
       row.sort((a, b) => a.rect.center.dx.compareTo(b.rect.center.dx));
 
-      // Encontra a bolha com maior fillRatio acima do limiar mínimo
       int bestIdx = -1;
-      double bestFill = 0.45; // limiar mínimo para considerar marcada
+      double bestFill = 0.45;
 
       for (int i = 0; i < row.length; i++) {
         if (row[i].fillRatio > bestFill) {
@@ -395,12 +363,10 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
       }
 
       if (bestIdx == -1) {
-        answers.add(null); // nenhuma marcada → em branco
+        answers.add(null);
         continue;
       }
 
-      // FIX 5 – anti-ambiguidade: a bolha vencedora precisa ser
-      // pelo menos 15 pp mais preenchida que a segunda
       final secondBest = row
           .asMap()
           .entries
@@ -411,7 +377,7 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
       if (row[bestIdx].fillRatio - secondBest >= 0.15) {
         answers.add(widget.exam.availableOptions[bestIdx]);
       } else {
-        answers.add(null); // duas bolhas muito parecidas → anula
+        answers.add(null);
       }
     }
 
@@ -445,42 +411,52 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (!_cameraController.value.isInitialized) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(child: CircularProgressIndicator(color: Colors.white)),
+      );
+    }
+
+    final isPortrait = MediaQuery.of(context).orientation == Orientation.portrait;
+    final cameraRatio = _cameraController.value.aspectRatio;
+    final previewRatio = isPortrait ? (1 / cameraRatio) : cameraRatio;
+
+    final previewSize = _cameraController.value.previewSize!;
+    final processedImageSize = isPortrait
+        ? Size(previewSize.height, previewSize.width)
+        : Size(previewSize.width, previewSize.height);
+
     return Scaffold(
       backgroundColor: Colors.black,
-      body: !_cameraController.value.isInitialized
-          ? const Center(child: CircularProgressIndicator(color: Colors.white))
-          : Stack(
-              fit: StackFit.expand,
-              children: [
-                // Para ajustar o preview da câmera corretamente
-                Center(
-                  child: AspectRatio(
-                    aspectRatio: _cameraController.value.aspectRatio,
-                    child: CameraPreview(_cameraController),
-                  ),
-                ),
-                // O CustomPaint precisa de um painter que entenda a escala
-                CustomPaint(
-                  painter: BubbleOverlayPainter(
-                    bubbles: _detectedBubbles,
-                    previewSize: MediaQuery.of(context).size,
-                    cameraSize: Size(
-                      _cameraController.value.previewSize!.height,
-                      _cameraController.value.previewSize!.width,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Center(
+            child: AspectRatio(
+              aspectRatio: previewRatio,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  CameraPreview(_cameraController),
+                  CustomPaint(
+                    painter: BubbleOverlayPainter(
+                      bubbles: _detectedBubbles,
+                      cameraSize: processedImageSize,
                     ),
                   ),
-                  size: Size.infinite,
-                ),
-                // A UI de controle permanece a mesma
-                _buildTopUI(context),
-                _buildBottomUI(context),
-                if (_isProcessing) _buildProcessingIndicator(),
-              ],
+                ],
+              ),
             ),
+          ),
+          _buildTopUI(context),
+          _buildBottomUI(context),
+          if (_isProcessing) _buildProcessingIndicator(),
+        ],
+      ),
     );
   }
-
-  // UI Widgets (extraídos para melhor organização)
+  
   Widget _buildTopUI(BuildContext context) {
     return Positioned(
       top: 0,
@@ -661,7 +637,6 @@ class _RealtimeDetectionScreenState extends State<RealtimeDetectionScreen>
   }
 }
 
-// Classes auxiliares
 class DetectedBubble {
   final Rect rect;
   final double fillRatio;
@@ -681,15 +656,28 @@ class DetectionResult {
   DetectionResult({required this.bubbles, required this.answers});
 }
 
-// Painter modificado para escalar corretamente as coordenadas
 class BubbleOverlayPainter extends CustomPainter {
   final List<DetectedBubble> bubbles;
-  final Size previewSize; // Tamanho da tela/widget
-  final Size cameraSize; // Tamanho real da imagem da câmera
+  final Size cameraSize;
+
+  // OTIMIZAÇÃO: Pré-instanciamos os objetos Paint APENAS UMA VEZ na memória.
+  // Isso evita criar milhares de objetos por segundo durante a captura da câmera.
+  final Paint _markedStrokePaint = Paint()
+    ..color = Colors.green
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2;
+
+  final Paint _markedFillPaint = Paint()
+    ..color = Colors.green.withValues(alpha: 0.3)
+    ..style = PaintingStyle.fill;
+
+  final Paint _unmarkedStrokePaint = Paint()
+    ..color = Colors.blue.withValues(alpha: 0.7)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2;
 
   BubbleOverlayPainter({
     required this.bubbles,
-    required this.previewSize,
     required this.cameraSize,
   });
 
@@ -697,12 +685,10 @@ class BubbleOverlayPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (bubbles.isEmpty || cameraSize.isEmpty) return;
 
-    // Calcula os fatores de escala para mapear as coordenadas da imagem para a tela
-    final double scaleX = previewSize.width / cameraSize.width;
-    final double scaleY = previewSize.height / cameraSize.height;
+    final double scaleX = size.width / cameraSize.width;
+    final double scaleY = size.height / cameraSize.height;
 
     for (final bubble in bubbles) {
-      // Mapeia o retângulo detectado para as coordenadas da tela
       final displayRect = Rect.fromLTWH(
         bubble.rect.left * scaleX,
         bubble.rect.top * scaleY,
@@ -710,26 +696,17 @@ class BubbleOverlayPainter extends CustomPainter {
         bubble.rect.height * scaleY,
       );
 
-      final paint = Paint()
-        ..color = bubble.isMarked
-            ? Colors.green
-            : Colors.blue.withValues(alpha: 0.7)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2;
-
-      canvas.drawRect(displayRect, paint);
-
       if (bubble.isMarked) {
-        final fillPaint = Paint()
-          ..color = Colors.green.withValues(alpha: 0.3)
-          ..style = PaintingStyle.fill;
-        canvas.drawRect(displayRect, fillPaint);
+        canvas.drawOval(displayRect, _markedFillPaint);
+        canvas.drawOval(displayRect, _markedStrokePaint);
+      } else {
+        canvas.drawOval(displayRect, _unmarkedStrokePaint);
       }
     }
   }
 
   @override
   bool shouldRepaint(covariant BubbleOverlayPainter oldDelegate) {
-    return oldDelegate.bubbles != bubbles;
+    return oldDelegate.cameraSize != cameraSize || oldDelegate.bubbles != bubbles;
   }
 }

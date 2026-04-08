@@ -1,11 +1,13 @@
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' show Rect;
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 
 import '../models/exam.dart';
 import '../models/image_quality_result.dart';
+import '../models/static_detected_bubble.dart';
 
-Future<List<String?>> processAnswerSheet({
+Future<ProcessedSheetResult> processAnswerSheet({
   required File imageFile,
   required Exam exam,
 }) async {
@@ -26,7 +28,7 @@ Future<List<String?>> processAnswerSheet({
   }
 }
 
-Future<List<String?>> _extractAnswersWithOpenCV(
+Future<ProcessedSheetResult> _extractAnswersWithOpenCV(
   cv.Mat image,
   Exam exam,
 ) async {
@@ -177,30 +179,22 @@ Future<List<String?>> _extractAnswersWithOpenCV(
   // ETAPA 5: LEITURA DE CADA QUESTÃO
   // =========================================================================
   final List<String?> answers = [];
+  final List<StaticDetectedBubble> uiBubbles = [];
+
+  // Fator de escala: mapeia as coordenadas do OpenCV de volta para a imagem original
+  final double scaleX = image.width / workingImage.width;
+  final double scaleY = image.height / workingImage.height;
 
   for (int q = 0; q < exam.numQuestions; q++) {
     final row = validRows[q];
-
-    // Ordena as bolhas da esquerda para a direita dentro da linha
     row.sort((a, b) => cv.boundingRect(a).x.compareTo(cv.boundingRect(b).x));
 
     final List<double> fillRatios = [];
 
     for (final contour in row) {
-      final mask = cv.Mat.zeros(
-        wThresh.rows,
-        wThresh.cols,
-        cv.MatType.CV_8UC1,
-      );
-      cv.drawContours(
-        mask,
-        cv.VecVecPoint.fromVecPoint(contour),
-        -1,
-        cv.Scalar.all(255),
-        thickness: -1,
-      );
-
-      // FIX 6 – fill ratio correto: pixels marcados / pixels totais da bolha
+      final mask = cv.Mat.zeros(wThresh.rows, wThresh.cols, cv.MatType.CV_8UC1);
+      cv.drawContours(mask, cv.VecVecPoint.fromVecPoint(contour), -1, cv.Scalar.all(255), thickness: -1);
+      
       final totalPx = cv.countNonZero(mask);
       final masked = cv.bitwiseAND(wThresh, wThresh, mask: mask);
       final filledPx = cv.countNonZero(masked);
@@ -208,38 +202,51 @@ Future<List<String?>> _extractAnswersWithOpenCV(
       fillRatios.add(totalPx > 0 ? filledPx / totalPx : 0.0);
     }
 
-    // Encontra o índice com maior fill ratio
     int bestIdx = 0;
     for (int j = 1; j < fillRatios.length; j++) {
       if (fillRatios[j] > fillRatios[bestIdx]) bestIdx = j;
     }
 
-    // FIX 7 – limiar absoluto mínimo + vantagem mínima sobre a segunda melhor
-    //   • limiar absoluto: bolha marcada com caneta/lápis tende a ter > 40 %
-    //   • vantagem mínima: evita anular por ruído uniforme
     const double minAbsoluteThreshold = 0.40;
     const double minAdvantage = 0.15;
 
-    final secondBest = fillRatios
-        .asMap()
-        .entries
-        .where((e) => e.key != bestIdx)
-        .map((e) => e.value)
+    final secondBest = fillRatios.asMap().entries
+        .where((e) => e.key != bestIdx).map((e) => e.value)
         .fold(0.0, (max, v) => v > max ? v : max);
 
-    if (fillRatios[bestIdx] >= minAbsoluteThreshold &&
-        fillRatios[bestIdx] - secondBest >= minAdvantage) {
+    final bool hasValidMark = fillRatios[bestIdx] >= minAbsoluteThreshold && 
+                              (fillRatios[bestIdx] - secondBest) >= minAdvantage;
+
+    if (hasValidMark) {
       answers.add(exam.availableOptions[bestIdx]);
     } else {
-      answers.add(null); // em branco ou ambígua
+      answers.add(null);
+    }
+
+    // Salva as posições originais das bolhas para a Interface Gráfica
+    for (int j = 0; j < row.length; j++) {
+      final rect = cv.boundingRect(row[j]);
+      
+      uiBubbles.add(StaticDetectedBubble(
+        rect: Rect.fromLTWH(
+          rect.x * scaleX, 
+          rect.y * scaleY, 
+          rect.width * scaleX, 
+          rect.height * scaleY
+        ),
+        isMarked: j == bestIdx && hasValidMark,
+      ));
     }
   }
 
-  // Garante tamanho correto
-  while (answers.length < exam.numQuestions) {
-    answers.add(null);
-  }
-  return answers.sublist(0, exam.numQuestions);
+  while (answers.length < exam.numQuestions) { answers.add(null); }
+
+  return ProcessedSheetResult(
+    answers: answers.sublist(0, exam.numQuestions),
+    bubbles: uiBubbles,
+    imageWidth: image.width.toDouble(),
+    imageHeight: image.height.toDouble(),
+  );
 }
 
 // =============================================================================

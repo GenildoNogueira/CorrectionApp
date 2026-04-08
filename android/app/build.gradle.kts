@@ -7,12 +7,6 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-val keystorePropertiesFile = rootProject.file("key.properties")
-val keystoreProperties = Properties()
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
-}
-
 android {
     namespace = "com.gnsdev.corretor_gabarito"
     compileSdk = flutter.compileSdkVersion
@@ -36,7 +30,6 @@ android {
         vectorDrawables.useSupportLibrary = true
     }
 
-
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.
@@ -47,3 +40,7 @@ android {
 }
 
 flutter { source = "../.." }
+
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+}

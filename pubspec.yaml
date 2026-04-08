@@ -6,7 +6,7 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: ">=3.9.0 <4.0.0"
+  sdk: ">=3.10.0 <4.0.0"
 
 dependencies:
   flutter:
@@ -16,7 +16,7 @@ dependencies:
   
   camera: ^0.11.2
   image_picker: ^1.1.2
-  opencv_dart: ^1.4.3
+  opencv_dart: ^2.2.1+4
 
 dev_dependencies:
   flutter_test:
@@ -31,13 +31,21 @@ flutter:
 hooks:
   user_defines:
     dartcv4:
-      exclude_modules:
-        - contrib
-        - videoio
-        - highgui
-        - dnn
-        - features2d
       include_modules:
         - core
         - imgproc
         - imgcodecs
+      exclude_modules:
+        - dnn
+        - videoio
+        - video
+        - highgui
+        - features2d
+        - calib3d
+        - objdetect
+        - flann
+        - photo
+        - stitching
+        - freetype
+        - aruco
+        - contrib

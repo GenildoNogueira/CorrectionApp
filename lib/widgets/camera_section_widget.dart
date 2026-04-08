@@ -4,25 +4,33 @@ import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 
 import '../models/exam.dart';
+import '../models/static_detected_bubble.dart';
 import '../screens/realtime_detection_screen.dart';
 import '../services/image_processing_service.dart';
 import '../widgets/gradient_button_widget.dart';
+import 'static_bubble_overlay.dart';
 
 class CameraSectionWidget extends StatelessWidget {
   final File? capturedImage;
   final CameraController? cameraController;
   final Exam? currentExam;
+
+  final List<StaticDetectedBubble> detectedBubbles;
+  final Size imageOriginalSize;
+
   final VoidCallback? onStartCamera;
   final VoidCallback? onCaptureImage;
   final VoidCallback? onPickFromGallery;
   final VoidCallback? onProcessAnswers;
-  final Function(List<String?>) onAnswersExtracted;
+  final Function(ProcessedSheetResult) onAnswersExtracted; 
 
   const CameraSectionWidget({
     super.key,
     this.capturedImage,
     this.cameraController,
     this.currentExam,
+    this.detectedBubbles = const [],
+    this.imageOriginalSize = Size.zero,
     this.onStartCamera,
     this.onCaptureImage,
     this.onPickFromGallery,
@@ -58,7 +66,15 @@ class CameraSectionWidget extends StatelessWidget {
         );
 
         if (result != null && result.isNotEmpty) {
-          onAnswersExtracted(result);
+          final fakeResult = ProcessedSheetResult(
+            answers: result,
+            bubbles: [],
+            imageWidth: 0,
+            imageHeight: 0,
+          );
+
+          onAnswersExtracted(fakeResult);
+
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Row(
@@ -118,24 +134,25 @@ class CameraSectionWidget extends StatelessWidget {
         ),
       );
 
-      // Processa a imagem
-      final answers = await processAnswerSheet(
+      final processedResult = await processAnswerSheet(
         imageFile: capturedImage!,
         exam: currentExam!,
       );
 
-      Navigator.of(context).pop();
-
-      onAnswersExtracted(answers);
+      if (context.mounted) {
+        Navigator.of(context).pop();
+        onAnswersExtracted(processedResult);
+      }
     } catch (e) {
-      Navigator.of(context).pop();
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Erro ao processar imagem: $e'),
-          backgroundColor: Colors.red.shade600,
-        ),
-      );
+      if (context.mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao processar imagem: $e'),
+            backgroundColor: Colors.red.shade600,
+          ),
+        );
+      }
     }
   }
 
@@ -193,7 +210,10 @@ class CameraSectionWidget extends StatelessWidget {
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: Colors.grey.shade300),
             ),
-            child: _buildPreview(context),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: _buildPreview(context),
+            ),
           ),
 
           const SizedBox(height: 20),
@@ -212,7 +232,6 @@ class CameraSectionWidget extends StatelessWidget {
                     Color(0xFF667eea),
                     Color(0xFF764ba2),
                   ],
-                  //icon: Icons.auto_awesome,
                 ),
               ),
 
@@ -300,104 +319,122 @@ class CameraSectionWidget extends StatelessWidget {
 
   Widget _buildPreview(BuildContext context) {
     if (capturedImage != null) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            Image.file(
-              capturedImage!,
-              fit: BoxFit.cover,
-            ),
-            Positioned(
-              top: 12,
-              left: 12,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.6),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.image, color: Colors.white, size: 16),
-                    const SizedBox(width: 4),
-                    const Text(
-                      'Imagem Capturada',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          FittedBox(
+            fit: BoxFit.contain,
+            child: SizedBox(
+              width: imageOriginalSize.width > 0
+                  ? imageOriginalSize.width
+                  : 100,
+              height: imageOriginalSize.height > 0
+                  ? imageOriginalSize.height
+                  : 100,
+              child: Stack(
+                children: [
+                  Image.file(
+                    capturedImage!,
+                    fit: BoxFit.fill,
+                    width: double.infinity,
+                    height: double.infinity,
+                  ),
+                  if (detectedBubbles.isNotEmpty)
+                    CustomPaint(
+                      size: imageOriginalSize,
+                      painter: StaticBubbleOverlayPainter(
+                        bubbles: detectedBubbles,
                       ),
                     ),
-                  ],
-                ),
+                ],
               ),
             ),
-          ],
-        ),
+          ),
+
+          Positioned(
+            top: 12,
+            left: 12,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.image, color: Colors.white, size: 16),
+                  const SizedBox(width: 4),
+                  const Text(
+                    'Imagem Capturada',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       );
     } else if (cameraController != null &&
         cameraController!.value.isInitialized) {
-      // Mostra o preview da câmera
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            CameraPreview(cameraController!),
-            Positioned(
-              bottom: 20,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: FloatingActionButton(
-                  onPressed: onCaptureImage,
-                  backgroundColor: Colors.white,
-                  child: const Icon(
-                    Icons.camera_alt,
-                    color: Color(0xFF764ba2),
-                    size: 28,
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          CameraPreview(cameraController!),
+          Positioned(
+            bottom: 20,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: FloatingActionButton(
+                onPressed: onCaptureImage,
+                backgroundColor: Colors.white,
+                child: const Icon(
+                  Icons.camera_alt,
+                  color: Color(0xFF764ba2),
+                  size: 28,
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 12,
+            left: 12,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: const BoxDecoration(
+                      color: Colors.red,
+                      shape: BoxShape.circle,
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 6),
+                  const Text(
+                    'Câmera Ativa',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
               ),
             ),
-            Positioned(
-              top: 12,
-              left: 12,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.6),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        color: Colors.red,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    const Text(
-                      'Câmera Ativa',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       );
     } else {
       return Column(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'question_row_widget.dart';
 import 'section_container_widget.dart';
 
 enum AnswerSheetMode { answerKey, studentAnswers }
@@ -26,6 +27,10 @@ class AnswerSheetWidget extends StatelessWidget {
     this.showExtractedIndicator = false,
   });
 
+  int _getGridColumns() => availableOptions.length <= 3 ? 2 : 1;
+
+  double get _rowHeight => 52.0;
+
   @override
   Widget build(BuildContext context) {
     return SectionContainerWidget(
@@ -36,7 +41,6 @@ class AnswerSheetWidget extends StatelessWidget {
       child: Column(
         spacing: 15,
         children: [
-          // Indicador de extração automática
           if (showExtractedIndicator)
             Container(
               margin: const EdgeInsets.only(bottom: 16),
@@ -72,185 +76,26 @@ class AnswerSheetWidget extends StatelessWidget {
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: _getGridColumns(),
-              childAspectRatio: 7,
+              mainAxisExtent: _rowHeight,
               crossAxisSpacing: 8,
               mainAxisSpacing: 8,
             ),
             itemCount: numQuestions,
-            itemBuilder: (context, index) => _buildQuestionRow(index),
+            itemBuilder: (context, index) => RepaintBoundary(
+              child: QuestionRowWidget(
+                questionIndex: index,
+                selectedAnswer: answers[index],
+                correctAnswer: correctAnswers?[index],
+                mode: mode,
+                availableOptions: availableOptions,
+                onSelectAnswer: onSelectAnswer,
+              ),
+            ),
           ),
           _buildProgressIndicator(),
         ],
       ),
     );
-  }
-
-  int _getGridColumns() {
-    if (availableOptions.length <= 3) return 2;
-    if (availableOptions.length <= 6) return 1;
-    return 1;
-  }
-
-  Widget _buildQuestionRow(int questionIndex) {
-    final bool hasAnswer = answers[questionIndex] != null;
-    bool isCorrect = false;
-    bool isWrong = false;
-
-    if (mode == AnswerSheetMode.studentAnswers &&
-        correctAnswers != null &&
-        hasAnswer &&
-        correctAnswers![questionIndex] != null) {
-      isCorrect = answers[questionIndex] == correctAnswers![questionIndex];
-      isWrong = !isCorrect;
-    }
-
-    Color borderColor = Colors.grey.shade300;
-    if (hasAnswer) {
-      if (mode == AnswerSheetMode.answerKey || isCorrect) {
-        borderColor = Color(
-          0xFF4CAF50,
-        ).withValues(alpha: 0.3);
-      } else if (isWrong) {
-        borderColor = Color(
-          0xFFFF5722,
-        ).withValues(alpha: 0.3);
-      } else {
-        borderColor = Color(0xFF4facfe).withValues(alpha: 0.3);
-      }
-    }
-
-    final double circleSize = _getCircleSize();
-
-    return Container(
-      height: 60,
-      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      decoration: BoxDecoration(
-        color: Color(0xFFF8F9FA),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: borderColor),
-      ),
-      child: Row(
-        spacing: 10,
-        children: [
-          Text(
-            '${questionIndex + 1}.',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: Colors.grey.shade700,
-              fontSize: 14,
-            ),
-          ),
-          Expanded(
-            child: Row(
-              children: availableOptions.map((option) {
-                final bool isSelected = answers[questionIndex] == option;
-                final bool isCorrectOption =
-                    mode == AnswerSheetMode.studentAnswers &&
-                    correctAnswers != null &&
-                    correctAnswers![questionIndex] == option;
-
-                return InkResponse(
-                  onTap: () => onSelectAnswer(questionIndex, option),
-                  containedInkWell: true,
-                  child: AnimatedContainer(
-                    duration: Duration(milliseconds: 200),
-                    width: circleSize,
-                    height: circleSize,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: _getOptionBorderColor(
-                          isSelected,
-                          isCorrectOption,
-                        ),
-                        width: 2,
-                      ),
-                      color: isSelected
-                          ? Color(0xFFFF5722)
-                          : Colors.transparent,
-                      boxShadow: isSelected
-                          ? [
-                              BoxShadow(
-                                color: _getOptionShadowColor(isCorrectOption),
-                                blurRadius: 5,
-                                offset: Offset(0, 2),
-                              ),
-                            ]
-                          : null,
-                    ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      option,
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: isSelected ? Colors.white : Colors.grey.shade600,
-                        fontSize: _getFontSize(),
-                      ),
-                    ),
-                  ),
-                );
-              }).toList(),
-            ),
-          ),
-          if (mode == AnswerSheetMode.studentAnswers &&
-              correctAnswers != null &&
-              hasAnswer)
-            Padding(
-              padding: EdgeInsets.only(left: 8),
-              child: Icon(
-                isCorrect ? Icons.check_circle : Icons.cancel,
-                color: isCorrect ? Colors.green : Colors.red,
-                size: 14,
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  double _getCircleSize() => switch (availableOptions.length) {
-    3 => 36.0,
-    4 => 32.0,
-    5 => 28.0,
-    _ => 30.0,
-  };
-
-  // Ajusta o tamanho da fonte baseado no número de opções
-  double _getFontSize() => switch (availableOptions.length) {
-    3 => 14.0,
-    4 => 13.0,
-    5 => 12.0,
-    _ => 12.0,
-  };
-
-  Color _getOptionBorderColor(bool isSelected, bool isCorrectOption) {
-    if (!isSelected) return Colors.grey.shade400;
-
-    if (mode == AnswerSheetMode.answerKey) {
-      return Color(0xFF4CAF50); // Verde para gabarito
-    }
-
-    if (mode == AnswerSheetMode.studentAnswers && correctAnswers != null) {
-      return isCorrectOption
-          ? Color(0xFF4CAF50)
-          : Color(0xFFFF5722); // Verde/Vermelho
-    }
-
-    return Color(0xFF4facfe); // Azul padrão
-  }
-
-  Color _getOptionShadowColor(bool isCorrectOption) {
-    if (mode == AnswerSheetMode.answerKey) {
-      return Color(0xFF4CAF50).withValues(alpha: 0.3);
-    }
-
-    if (mode == AnswerSheetMode.studentAnswers && correctAnswers != null) {
-      return isCorrectOption
-          ? Color(0xFF4CAF50).withValues(alpha: 0.3)
-          : Color(0xFFFF5722).withValues(alpha: 0.3);
-    }
-
-    return Color(0xFF4facfe).withValues(alpha: 0.3);
   }
 
   Widget _buildProgressIndicator() {
@@ -266,12 +111,11 @@ class AnswerSheetWidget extends StatelessWidget {
 
     if (mode == AnswerSheetMode.answerKey) {
       progressText = 'Gabarito';
-      progressColor = Color(0xFF4CAF50);
+      progressColor = const Color(0xFF4CAF50);
     } else {
       progressText = 'Progresso';
-      progressColor = Color(0xFF4facfe);
+      progressColor = const Color(0xFF4facfe);
 
-      // Se temos o gabarito, mostrar também acertos/erros
       if (correctAnswers != null) {
         int correctCount = 0;
         int wrongCount = 0;
@@ -286,14 +130,12 @@ class AnswerSheetWidget extends StatelessWidget {
           }
         }
 
-        if (correctCount + wrongCount > 0) {
-          progressText = 'Resultado';
-        }
+        if (correctCount + wrongCount > 0) progressText = 'Resultado';
       }
     }
 
     return Container(
-      padding: EdgeInsets.all(15),
+      padding: const EdgeInsets.all(15),
       decoration: BoxDecoration(
         color: Colors.grey.shade100,
         borderRadius: BorderRadius.circular(10),
@@ -316,14 +158,14 @@ class AnswerSheetWidget extends StatelessWidget {
               ),
             ],
           ),
-          SizedBox(height: 8),
+          const SizedBox(height: 8),
           LinearProgressIndicator(
             value: progress,
             backgroundColor: Colors.grey.shade300,
             valueColor: AlwaysStoppedAnimation<Color>(progressColor),
             minHeight: 6,
           ),
-          SizedBox(height: 8),
+          const SizedBox(height: 8),
           _buildProgressText(progress, answeredQuestions),
         ],
       ),

@@ -16,6 +16,8 @@
   env = {
     CMAKE_COMMAND = "${pkgs.cmake}/bin/cmake";
     NINJA_COMMAND = "${pkgs.ninja}/bin/ninja";
+    ANDROID_HOME = "/home/user/.androidsdkroot";
+    ANDROID_NDK_HOME = "/home/user/.androidsdkroot/ndk/27.0.12077973";
   };
   idx = {
     # Search for the extensions you want on https://open-vsx.org/ and use "publisher.id"
@@ -27,6 +29,10 @@
       # Runs when a workspace is first created with this `dev.nix` file
       onCreate = { };
       # To run something each time the workspace is (re)started, use the `onStart` hook
+      onStart = {
+        # ADICIONADO: Garante que o ndk-build fique disponível no PATH do terminal do IDX
+        setup-path = "export PATH=$PATH:/home/user/.androidsdkroot/ndk/27.0.12077973";
+      };
     };
     # Enable previews and customize configuration
     previews = {
